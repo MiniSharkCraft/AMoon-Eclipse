@@ -5,8 +5,8 @@ import {
 } from 'react-native-webrtc'
 import * as SecureStore from 'expo-secure-store'
 
-const API = 'https://engine.congmc.com'
-const WS_URL = 'wss://engine.congmc.com/api/ws'
+const API = process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:8080'
+const WS_URL = ((process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:8080').replace(/^http/, 'ws') + '/ws')
 
 export type CallState = 'idle' | 'calling' | 'ringing' | 'active' | 'ended'
 

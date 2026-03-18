@@ -15,7 +15,7 @@ import {
   encryptPrivateKeyWithPassphrase,
 } from '../../src/lib/crypto'
 
-const API = process.env.EXPO_PUBLIC_API_URL ?? 'https://engine.congmc.com'
+const API = process.env.EXPO_PUBLIC_API_URL ?? process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:8080'
 
 async function setupAndSaveKey(userId: string, token: string, passphrase?: string) {
   const existing = await SecureStore.getItemAsync(`privateKey_${userId}`)

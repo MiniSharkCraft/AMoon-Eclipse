@@ -18,9 +18,9 @@
         "gradleCommand": ":app:assembleRelease"
       },
       "env": {
-        "EXPO_PUBLIC_API_URL": "https://amoon-eclipse.fly.dev",
-        "EXPO_PUBLIC_GOOGLE_CLIENT_ID": "508238156590-8blnr5tj5e537b1010u8aeshdbekhb0r.apps.googleusercontent.com",
-        "EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID": "508238156590-jjvnimkhid7vdhf9h4umi9aa98mrqht6.apps.googleusercontent.com"
+        "EXPO_PUBLIC_API_URL": "https://your-server-url.com",
+        "EXPO_PUBLIC_GOOGLE_CLIENT_ID": "your-web-client-id.apps.googleusercontent.com",
+        "EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID": "your-android-client-id.apps.googleusercontent.com"
       }
     },
     "production": {
@@ -29,9 +29,9 @@
         "buildType": "apk"
       },
       "env": {
-        "EXPO_PUBLIC_API_URL": "https://amoon-eclipse.fly.dev",
-        "EXPO_PUBLIC_GOOGLE_CLIENT_ID": "508238156590-8blnr5tj5e537b1010u8aeshdbekhb0r.apps.googleusercontent.com",
-        "EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID": "508238156590-jjvnimkhid7vdhf9h4umi9aa98mrqht6.apps.googleusercontent.com"
+        "EXPO_PUBLIC_API_URL": "https://your-server-url.com",
+        "EXPO_PUBLIC_GOOGLE_CLIENT_ID": "your-web-client-id.apps.googleusercontent.com",
+        "EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID": "your-android-client-id.apps.googleusercontent.com"
       }
     }
   },

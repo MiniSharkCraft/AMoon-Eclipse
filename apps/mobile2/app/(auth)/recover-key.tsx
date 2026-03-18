@@ -12,7 +12,7 @@ import {
   generateRsaKeyPair, exportRsaKeyPair, publicKeyFingerprint,
 } from '../../src/lib/crypto'
 
-const API = process.env.EXPO_PUBLIC_API_URL ?? 'https://engine.congmc.com'
+const API = process.env.EXPO_PUBLIC_API_URL ?? process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:8080'
 
 export default function RecoverKeyScreen() {
   const [passphrase, setPassphrase] = useState('')

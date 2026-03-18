@@ -162,7 +162,7 @@ export function LoginPage() {
         </div>
 
         {/* Version */}
-        <p className="text-dark-400/50 text-xs">v0.1.0 · engine.congmc.com</p>
+        <p className="text-dark-400/50 text-xs">Beta v1.0</p>
       </div>
 
       {/* ── Right: Form panel ─────────────────────────────────────────────── */}

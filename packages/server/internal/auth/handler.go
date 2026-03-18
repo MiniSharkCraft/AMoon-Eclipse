@@ -26,14 +26,15 @@ type Handler struct {
 	jwtSecret            string
 	enc                  *dbcrypto.FieldEncryptor
 	hmac                 *dbcrypto.HmacTokener
+	baseURL              string
 	googleClientID       string
 	googleClientSecret   string
 	facebookAppID        string
 	mailer               *email.Sender
 }
 
-func NewHandler(db *sql.DB, jwtSecret string, enc *dbcrypto.FieldEncryptor, hmac *dbcrypto.HmacTokener, googleClientID, googleClientSecret, facebookAppID string, mailer *email.Sender) *Handler {
-	return &Handler{db: db, jwtSecret: jwtSecret, enc: enc, hmac: hmac, googleClientID: googleClientID, googleClientSecret: googleClientSecret, facebookAppID: facebookAppID, mailer: mailer}
+func NewHandler(db *sql.DB, jwtSecret string, enc *dbcrypto.FieldEncryptor, hmac *dbcrypto.HmacTokener, baseURL, googleClientID, googleClientSecret, facebookAppID string, mailer *email.Sender) *Handler {
+	return &Handler{db: db, jwtSecret: jwtSecret, enc: enc, hmac: hmac, baseURL: baseURL, googleClientID: googleClientID, googleClientSecret: googleClientSecret, facebookAppID: facebookAppID, mailer: mailer}
 }
 
 func (h *Handler) Routes() chi.Router {
@@ -536,12 +537,12 @@ func (h *Handler) getEncryptedKey(w http.ResponseWriter, r *http.Request) {
 
 // ── Google OAuth server-side ───────────────────────────────────────────────
 
-const googleRedirectURI = "https://engine.congmc.com/api/auth/google/callback"
+// googleRedirectURI lấy từ BASE_URL env var (set trong .env)
 
 func (h *Handler) googleStart(w http.ResponseWriter, r *http.Request) {
 	params := url.Values{
 		"client_id":     {h.googleClientID},
-		"redirect_uri":  {googleRedirectURI},
+		"redirect_uri":  {h.baseURL + "/api/auth/google/callback"},
 		"response_type": {"code"},
 		"scope":         {"openid email profile"},
 		"access_type":   {"offline"},
@@ -561,7 +562,7 @@ func (h *Handler) googleCallback(w http.ResponseWriter, r *http.Request) {
 		"code":          {code},
 		"client_id":     {h.googleClientID},
 		"client_secret": {h.googleClientSecret},
-		"redirect_uri":  {googleRedirectURI},
+		"redirect_uri":  {h.baseURL + "/api/auth/google/callback"},
 		"grant_type":    {"authorization_code"},
 	})
 	if err != nil {

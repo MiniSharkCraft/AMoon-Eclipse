@@ -5,6 +5,9 @@
  * Private keys NEVER leave IndexedDB. Zero-Knowledge.
  */
 
+// Configure via .env — see .env.example
+const API = import.meta.env.VITE_API_URL ?? 'http://localhost:8080'
+
 import { create } from 'zustand'
 import { openDB, type IDBPDatabase } from 'idb'
 import {
@@ -74,7 +77,7 @@ export const useAuthStore = create<AuthState>((set, _get) => ({
     const fingerprint = await publicKeyFingerprint(publicKey)
     const passwordHash = await hashPassword(password)
 
-    const res = await fetch('https://engine.congmc.com/api/auth/register', {
+    const res = await fetch(`${API}/api/auth/register`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ username, publicKey, fingerprint, passwordHash }),
@@ -96,7 +99,7 @@ export const useAuthStore = create<AuthState>((set, _get) => ({
 
   login: async (username, password) => {
     const passwordHash = await hashPassword(password)
-    const res = await fetch('https://engine.congmc.com/api/auth/login', {
+    const res = await fetch(`${API}/api/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ username, passwordHash }),

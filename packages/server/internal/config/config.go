@@ -13,6 +13,7 @@ type Config struct {
 	DBHmacKey        string // 64-char hex = 32 bytes, HMAC-SHA256 email token
 	AllowedOrigins   []string
 	Env              string
+	BaseURL            string // Public URL, dùng cho OAuth redirect (VD: https://yourdomain.com)
 	GoogleClientID     string // Web client ID
 	GoogleClientSecret string // Web client secret
 	CFTurnTokenID      string // Cloudflare TURN token ID
@@ -35,6 +36,7 @@ func Load() *Config {
 		DBHmacKey:       mustEnv("DB_HMAC_KEY"),
 		AllowedOrigins:  origins,
 		Env:             getEnv("ENV", "production"),
+		BaseURL:            getEnv("BASE_URL", "http://localhost:8080"),
 		GoogleClientID:     getEnv("GOOGLE_CLIENT_ID", ""),
 		GoogleClientSecret: getEnv("GOOGLE_CLIENT_SECRET", ""),
 		CFTurnTokenID:      getEnv("CF_TURN_TOKEN_ID", ""),

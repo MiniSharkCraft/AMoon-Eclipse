@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
 
-const API = 'https://engine.congmc.com'
+const API = process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:8080'
 
 export type CallState = 'idle' | 'calling' | 'ringing' | 'active' | 'ended'
 

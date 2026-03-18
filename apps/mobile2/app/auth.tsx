@@ -11,7 +11,7 @@ import {
   encryptPrivateKeyWithPassphrase,
 } from '../src/lib/crypto'
 
-const API = process.env.EXPO_PUBLIC_API_URL ?? 'https://engine.congmc.com'
+const API = process.env.EXPO_PUBLIC_API_URL ?? process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:8080'
 
 export default function GoogleCallbackScreen() {
   const params = useLocalSearchParams<{ token?: string; userId?: string; username?: string; error?: string }>()

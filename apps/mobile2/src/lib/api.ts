@@ -1,6 +1,7 @@
 import { storage } from './storage'
 
-const BASE = process.env.EXPO_PUBLIC_API_URL ?? 'https://engine.congmc.com'
+// Configure via .env — see .env.example
+const BASE = process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:8080'
 export const WS_BASE = BASE.replace(/^http/, 'ws')
 
 class ApiError extends Error {

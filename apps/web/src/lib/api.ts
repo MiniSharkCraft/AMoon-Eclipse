@@ -1,5 +1,6 @@
-const BASE = 'https://engine.congmc.com'
-export const WS_BASE = 'wss://engine.congmc.com'
+// Configure via .env — see .env.example
+const BASE = import.meta.env.VITE_API_URL ?? 'http://localhost:8080'
+export const WS_BASE = BASE.replace(/^https/, 'wss').replace(/^http/, 'ws')
 
 class ApiError extends Error {
   constructor(public status: number, message: string) { super(message) }

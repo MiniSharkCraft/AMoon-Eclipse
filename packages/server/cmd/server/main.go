@@ -62,7 +62,7 @@ func main() {
 	if cfg.SMTPHost != "" && cfg.SMTPUser != "" {
 		mailer = email.NewSender(cfg.SMTPHost, cfg.SMTPPort, cfg.SMTPUser, cfg.SMTPPass, cfg.EmailFrom)
 	}
-	authHandler       := auth.NewHandler(db, cfg.JWTSecret, enc, hmacT, cfg.GoogleClientID, cfg.GoogleClientSecret, cfg.FacebookAppID, mailer)
+	authHandler       := auth.NewHandler(db, cfg.JWTSecret, enc, hmacT, cfg.BaseURL, cfg.GoogleClientID, cfg.GoogleClientSecret, cfg.FacebookAppID, mailer)
 	roomsHandler      := rooms.NewHandler(db)
 	msgsHandler       := messages.NewHandler(db, hub)
 	notesHandler      := notes.NewHandler(db)
