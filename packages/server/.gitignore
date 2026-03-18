@@ -2,3 +2,7 @@
 .env.local
 *.env
 go.sum
+# compiled binaries
+amoon-server
+server
+*.exe
