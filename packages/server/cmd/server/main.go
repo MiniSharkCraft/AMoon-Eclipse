@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -62,7 +63,7 @@ func main() {
 	if cfg.SMTPHost != "" && cfg.SMTPUser != "" {
 		mailer = email.NewSender(cfg.SMTPHost, cfg.SMTPPort, cfg.SMTPUser, cfg.SMTPPass, cfg.EmailFrom)
 	}
-	authHandler       := auth.NewHandler(db, cfg.JWTSecret, enc, hmacT, cfg.BaseURL, cfg.GoogleClientID, cfg.GoogleClientSecret, cfg.FacebookAppID, mailer)
+	authHandler       := auth.NewHandler(db, cfg.JWTSecret, enc, hmacT, cfg.GoogleClientID, cfg.GoogleClientSecret, cfg.FacebookAppID, mailer)
 	roomsHandler      := rooms.NewHandler(db)
 	msgsHandler       := messages.NewHandler(db, hub)
 	notesHandler      := notes.NewHandler(db)
@@ -75,24 +76,41 @@ func main() {
 
 	// Router
 	r := chi.NewRouter()
+	r.Use(mw.BlockScanners)           // FIRST: auto-ban IP quét lỗ hổng (trước cả logger)
 	r.Use(middleware.RealIP)
 	r.Use(middleware.Logger)
 	r.Use(middleware.Recoverer)
 	r.Use(corsMiddleware(cfg.AllowedOrigins))
 	r.Use(middleware.Timeout(30 * time.Second))
 	r.Use(mw.SecurityHeaders)
-	r.Use(mw.MaxBodySize(512 * 1024)) // 512KB default body limit
+	r.Use(mw.MaxBodySize(512 * 1024))
 
 	r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"status":"ok"}`))
 	})
 
-	// Serve web frontend
+	// Serve web frontend — chỉ serve SPA cho path hợp lệ, block scanner paths
 	webDist, _ := fs.Sub(webFS, "web")
 	webServer := http.FileServer(http.FS(webDist))
 	r.Get("/*", func(w http.ResponseWriter, r *http.Request) {
-		if _, err := webDist.Open(r.URL.Path[1:]); err != nil {
-			r.URL.Path = "/"
+		path := r.URL.Path
+
+		// Chặn scanner paths ngay tại đây (defense-in-depth)
+		if mw.IsScannerPath(path) {
+			mw.HackerRoast(w, r)
+			return
+		}
+
+		if _, err := webDist.Open(path[1:]); err != nil {
+			// Không có extension → SPA route, serve index.html
+			if !strings.Contains(path, ".") {
+				r.URL.Path = "/"
+				webServer.ServeHTTP(w, r)
+				return
+			}
+			// Có extension nhưng file không tồn tại → 404
+			http.NotFound(w, r)
+			return
 		}
 		webServer.ServeHTTP(w, r)
 	})

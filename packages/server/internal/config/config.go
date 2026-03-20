@@ -1,9 +1,46 @@
 package config
 
 import (
+	"bufio"
 	"os"
 	"strings"
 )
+
+// loadDotEnv đọc file .env trong working directory và set các biến chưa có.
+// Format: KEY=VALUE (bỏ qua dòng trống và comment #)
+func loadDotEnv(path string) {
+	f, err := os.Open(path)
+	if err != nil {
+		return // không có file .env thì bỏ qua
+	}
+	defer f.Close()
+
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		idx := strings.IndexByte(line, '=')
+		if idx < 1 {
+			continue
+		}
+		key := strings.TrimSpace(line[:idx])
+		val := strings.TrimSpace(line[idx+1:])
+		// Strip inline comment
+		if ci := strings.Index(val, " #"); ci >= 0 {
+			val = strings.TrimSpace(val[:ci])
+		}
+		// Strip surrounding quotes
+		if len(val) >= 2 && ((val[0] == '"' && val[len(val)-1] == '"') || (val[0] == '\'' && val[len(val)-1] == '\'')) {
+			val = val[1 : len(val)-1]
+		}
+		// Chỉ set nếu chưa có (env var thật được ưu tiên hơn .env)
+		if os.Getenv(key) == "" {
+			os.Setenv(key, val)
+		}
+	}
+}
 
 type Config struct {
 	Port             string
@@ -13,7 +50,6 @@ type Config struct {
 	DBHmacKey        string // 64-char hex = 32 bytes, HMAC-SHA256 email token
 	AllowedOrigins   []string
 	Env              string
-	BaseURL            string // Public URL, dùng cho OAuth redirect (VD: https://yourdomain.com)
 	GoogleClientID     string // Web client ID
 	GoogleClientSecret string // Web client secret
 	CFTurnTokenID      string // Cloudflare TURN token ID
@@ -27,16 +63,16 @@ type Config struct {
 }
 
 func Load() *Config {
+	loadDotEnv(".env")
 	origins := strings.Split(getEnv("ALLOWED_ORIGINS", "*"), ",")
 	return &Config{
-		Port:            getEnv("PORT", "8080"),
+		Port:            getEnv("PORT", getEnv("P_SERVER_PORT", "8080")),
 		DBDSN:           mustEnv("DB_DSN"),
 		JWTSecret:       mustEnv("JWT_SECRET"),
 		DBEncryptionKey: mustEnv("DB_ENCRYPTION_KEY"),
 		DBHmacKey:       mustEnv("DB_HMAC_KEY"),
 		AllowedOrigins:  origins,
 		Env:             getEnv("ENV", "production"),
-		BaseURL:            getEnv("BASE_URL", "http://localhost:8080"),
 		GoogleClientID:     getEnv("GOOGLE_CLIENT_ID", ""),
 		GoogleClientSecret: getEnv("GOOGLE_CLIENT_SECRET", ""),
 		CFTurnTokenID:      getEnv("CF_TURN_TOKEN_ID", ""),
