@@ -1,318 +1,324 @@
-# MesSmini
+<div align="center">
 
 ```
-███╗   ███╗███████╗███████╗███████╗███╗   ███╗██╗███╗   ██╗██╗
-████╗ ████║██╔════╝██╔════╝██╔════╝████╗ ████║██║████╗  ██║██║
-██╔████╔██║█████╗  ███████╗███████╗██╔████╔██║██║██╔██╗ ██║██║
-██║╚██╔╝██║██╔══╝  ╚════██║╚════██║██║╚██╔╝██║██║██║╚██╗██║██║
-██║ ╚═╝ ██║███████╗███████║███████║██║ ╚═╝ ██║██║██║ ╚████║██║
-╚═╝     ╚═╝╚══════╝╚══════╝╚══════╝╚═╝     ╚═╝╚═╝╚═╝  ╚═══╝╚═╝
+ █████╗ ███╗   ███╗ ██████╗  ██████╗ ███╗   ██╗
+██╔══██╗████╗ ████║██╔═══██╗██╔═══██╗████╗  ██║
+███████║██╔████╔██║██║   ██║██║   ██║██╔██╗ ██║
+██╔══██║██║╚██╔╝██║██║   ██║██║   ██║██║╚██╗██║
+██║  ██║██║ ╚═╝ ██║╚██████╔╝╚██████╔╝██║ ╚████║
+╚═╝  ╚═╝╚═╝     ╚═╝ ╚═════╝  ╚═════╝╚═╝  ╚═══╝
+         E C L I P S E
 ```
 
-> **"Vắt kiệt công nghệ"** — CongMC Dev Team 🐧☝️
+**End-to-End Encrypted Messenger — Web · Mobile · Desktop**
 
-A zero-knowledge, end-to-end encrypted multi-platform messenger.
-Built on the Cloudflare Free Tier. Runs everywhere. Costs nearly nothing.
+[![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
+[![Go](https://img.shields.io/badge/Go-1.22-00ADD8?logo=go)](https://go.dev)
+[![React](https://img.shields.io/badge/React-18-61DAFB?logo=react)](https://react.dev)
+[![Expo](https://img.shields.io/badge/Expo-51-000020?logo=expo)](https://expo.dev)
+
+</div>
 
 ---
 
-## Philosophy
+## What is AMoon Eclipse?
 
-> The server is dumb. The client is smart. The key never leaves your device.
+AMoon Eclipse is a **zero-knowledge, end-to-end encrypted** messaging platform. The server stores only ciphertext it cannot read. Your private key never leaves your device.
 
-MesSmini is built around one constraint: **the server is zero-knowledge**.
-Every message is encrypted before it leaves the sender's device.
-The Cloudflare Worker stores and relays ciphertext it cannot read.
-Your private key lives in **IndexedDB** (Web/Desktop) or **SecureStore** (Android/iOS) — never on a server, never in a database, never in transit.
+- **Web** — React 18 + Vite + Tailwind CSS
+- **Mobile** — React Native + Expo (Android & iOS)
+- **Desktop** — Wails v2 (Go + React, single binary — no Electron)
+- **Backend** — Go + Chi router + MySQL/MariaDB + WebSocket hub
 
-This is not a feature. This is the architecture.
+Every message is encrypted client-side with **AES-256-GCM** before transmission. The session key is wrapped per-recipient using **RSA-2048-OAEP**. The server is a blind relay.
 
 ---
 
-## Tech Stack
+## Support This Project
 
-### The Ecosystem
+If AMoon Eclipse helped you or you want to keep development going:
 
-| Layer | Technology |
-|---|---|
-| **Web** | React 18 + Vite 5 + Tailwind CSS (Cyberpunk theme) |
-| **Mobile** | React Native + Expo Go + NativeWind |
-| **Desktop** | Electron (wraps the Web build) |
-| **Backend** | Cloudflare Workers + Hono v4 + Durable Objects (WebSocket) |
-| **Database** | Cloudflare D1 (SQLite at the edge) |
-| **Storage** | Cloudflare R2 (7-day auto-delete lifecycle) |
-| **Rate Limit** | KV-backed sliding-window (60 req/min/IP) |
+[![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/G2G11UYLFQ)
 
-### Core Crypto — Shared Across All Platforms
+---
+
+## Security Architecture
 
 ```
-packages/common/src/crypto-engine.ts
+┌──────────────────────────────────────────────────┐
+│                  SENDER DEVICE                   │
+│                                                  │
+│  plaintext ──► AES-256-GCM ──► ciphertext        │
+│                      ▲                           │
+│           ephemeral session key (random)         │
+│                      │                           │
+│      RSA-OAEP wrap × N recipients                │
+│      sessionKeys = { userId: encryptedKey, … }   │
+└─────────────────────┬────────────────────────────┘
+                      │  { sessionKeys, payload }
+                      ▼
+┌──────────────────────────────────────────────────┐
+│               GO SERVER  (BLIND)                 │
+│                                                  │
+│  Stores bundle as opaque TEXT in MySQL.          │
+│  Forwards via WebSocket hub.                     │
+│  Cannot read any message. Zero-knowledge.        │
+└─────────────────────┬────────────────────────────┘
+                      │  same bundle
+                      ▼
+┌──────────────────────────────────────────────────┐
+│                RECIPIENT DEVICE                  │
+│                                                  │
+│  sessionKeys[myId] ──► RSA-OAEP unwrap           │
+│                              ▼                   │
+│             session key ──► AES-256-GCM decrypt  │
+│                              ▼                   │
+│                        plaintext ✓               │
+└──────────────────────────────────────────────────┘
 ```
 
-| Algorithm | Use |
-|---|---|
-| **AES-256-GCM** | Message encryption (ephemeral session key per message) |
-| **RSA-2048-OAEP** | Session key encapsulation (per recipient) |
-| **SHA-256** | Key fingerprint for out-of-band verification |
-| **Web Crypto API** | Native on Web/Desktop — polyfilled by `expo-standard-web-crypto` on React Native |
+### Key Storage per Platform
 
-The same `encryptMessage()` / `decryptMessage()` functions run on all three platforms with **zero platform branching**. The polyfill handles the rest.
+| Platform | Storage | Backed by |
+|----------|----------|-----------|
+| Web | IndexedDB (`idb`) | Browser origin |
+| Desktop (Wails) | IndexedDB | WebView2 / WebKitGTK |
+| Mobile | `expo-secure-store` | Android Keystore / iOS Keychain |
+
+### Server-side Hardening
+
+- **Scanner auto-ban** — detects vulnerability probes (`.env`, `.php`, `wp-admin`, etc.), bans IPs after 8 hits in 60 s for 2 hours, serves a honeypot page
+- **Rate limiting** — separate limits for auth, API, and WebSocket
+- **Security headers** — CSP, X-Frame-Options, Referrer-Policy, Permissions-Policy
+- **Body size cap** — 512 KB max
+- **Field-level encryption** — PII (emails) encrypted with AES-256-GCM at rest using a server-side key
 
 ---
 
 ## Monorepo Structure
 
 ```
-messmini/
+amoon-eclipse/
 ├── apps/
 │   ├── web/                    # React + Vite + Tailwind
-│   │   ├── src/
-│   │   │   ├── components/     # Reusable UI
-│   │   │   ├── pages/          # LoginPage, ChatPage
-│   │   │   ├── hooks/          # useWebSocket, useCrypto
-│   │   │   └── stores/         # Zustand (authStore, chatStore)
-│   │   ├── index.html
-│   │   ├── vite.config.ts
-│   │   └── tailwind.config.ts
-│   │
 │   ├── mobile/                 # React Native + Expo
-│   │   ├── app/
-│   │   │   ├── _layout.tsx     # ← Web Crypto polyfill installed HERE (first import)
-│   │   │   ├── (auth)/
-│   │   │   │   └── login.tsx
-│   │   │   └── (app)/
-│   │   │       ├── index.tsx   # Room list
-│   │   │       └── [roomId].tsx
-│   │   ├── metro.config.js     # Monorepo resolver
-│   │   ├── babel.config.js     # NativeWind + Reanimated
-│   │   ├── app.json
-│   │   └── tailwind.config.js
-│   │
-│   └── desktop/                # Electron wrapper
-│       └── electron/
-│           ├── main.js         # BrowserWindow, shortcuts, notifications
-│           └── preload.js      # contextBridge (IPC bridge)
+│   └── desktop/                # Wails v2 (Go + React)
 │
-├── packages/
-│   ├── common/                 # Shared across ALL platforms
-│   │   └── src/
-│   │       ├── crypto-engine.ts  # ★ Core E2EE — AES-GCM + RSA-OAEP
-│   │       ├── types.ts          # Shared TypeScript interfaces
-│   │       └── index.ts
-│   │
-│   └── server/                 # Cloudflare Workers backend
-│       ├── src/
-│       │   ├── index.ts          # Hono router + ChatRoom Durable Object
-│       │   ├── middleware/
-│       │   │   └── rateLimiter.ts
-│       │   └── routes/
-│       │       ├── auth.ts       # Register, login, public key exchange
-│       │       ├── rooms.ts      # Room CRUD
-│       │       ├── messages.ts   # Paginated ciphertext fetch
-│       │       └── upload.ts     # R2 encrypted attachment upload
-│       ├── schema.sql            # D1 migrations
-│       └── wrangler.toml         # ★ Cloudflare config
-│
-├── docs/
-│   └── EXPO_GO_SETUP.md        # Android fast-test guide
-│
-├── package.json                # pnpm workspaces root
-├── pnpm-workspace.yaml
-├── turbo.json                  # Turborepo build pipeline
-└── tsconfig.base.json          # Shared TS config
+└── packages/
+    ├── common/
+    │   └── src/
+    │       └── crypto-engine.ts  # Shared E2EE — runs on all 3 platforms
+    │
+    └── server/                 # Go backend
+        ├── cmd/server/main.go  # Router, middleware, graceful shutdown
+        └── internal/
+            ├── auth/           # Register, login, OAuth, TOTP, key management
+            ├── messages/       # E2EE message store + WebSocket push
+            ├── rooms/          # DM and group rooms
+            ├── friends/        # Friend requests
+            ├── users/          # Profile, search
+            ├── notes/          # Self-destructing notes
+            ├── calls/          # WebRTC TURN credentials (Cloudflare)
+            ├── blocks/         # User blocking
+            ├── moderation/     # Chat bans, harassment tracking
+            ├── pending/        # Pending messages (pre-friend)
+            ├── ws/             # WebSocket hub (rooms + P2P signaling)
+            ├── middleware/     # JWT auth, rate limit, scanner ban, security headers
+            ├── crypto/         # AES-GCM field encryption, HMAC tokens
+            ├── db/             # MySQL connection + schema
+            ├── email/          # SMTP mailer
+            └── config/         # Env + .env file loader
 ```
 
 ---
 
-## Security Model
+## Features
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                        SENDER DEVICE                        │
-│                                                             │
-│  plaintext ──► AES-256-GCM encrypt ──► ciphertext          │
-│                       ▲                                     │
-│              ephemeral session key                          │
-│                       │                                     │
-│        RSA-OAEP wrap (per recipient public key)             │
-│                       │                                     │
-│              encrypted session keys                         │
-└────────────────────────┬────────────────────────────────────┘
-                         │  MessageBundle (JSON)
-                         ▼
-┌─────────────────────────────────────────────────────────────┐
-│                    CLOUDFLARE WORKER                        │
-│                                                             │
-│   Stores bundle as opaque TEXT in D1.                       │
-│   Relays via WebSocket (Durable Object).                    │
-│   NEVER decrypts. NEVER has private keys.                   │
-│   Zero-Knowledge by design.                                 │
-└────────────────────────┬────────────────────────────────────┘
-                         │  MessageBundle (same JSON)
-                         ▼
-┌─────────────────────────────────────────────────────────────┐
-│                     RECIPIENT DEVICE                        │
-│                                                             │
-│  encrypted session key ──► RSA-OAEP unwrap (private key)   │
-│                                  ▼                          │
-│              session key ──► AES-256-GCM decrypt            │
-│                                  ▼                          │
-│                           plaintext ✓                       │
-└─────────────────────────────────────────────────────────────┘
-```
-
-### Key Storage
-
-| Platform | Storage | Notes |
-|---|---|---|
-| Web | IndexedDB (idb) | Browser origin-scoped |
-| Desktop | IndexedDB (Electron) | Same as Web — Electron uses Chromium's storage |
-| Mobile | `expo-secure-store` | Android Keystore / iOS Keychain |
-
----
-
-## Cloudflare Free Tier Strategy
-
-| Resource | Free Limit | MesSmini Usage |
-|---|---|---|
-| Workers | 100k req/day | Rate limited at 60 req/min/IP |
-| D1 | 5M rows read/day | Paginated queries, indexed |
-| R2 | 10 GB storage | 7-day lifecycle auto-delete |
-| R2 Class A ops | 1M/month | Upload-only endpoint |
-| R2 Class B ops | 10M/month | Download-only endpoint |
-| Durable Objects | 100k req/day | One DO per chat room |
-| KV | 100k reads/day | Rate limiter counters (TTL 60s) |
-
-**R2 Lifecycle Policy** (set in Dashboard → R2 → messmini-attachments → Lifecycle):
-→ Expire objects after **7 days** → removes stale attachments automatically → stays within free storage.
+| Feature | Status |
+|---------|--------|
+| End-to-end encrypted DM | ✅ |
+| End-to-end encrypted group chat | ✅ |
+| WebRTC P2P voice/video calls | ✅ |
+| Real-time WebSocket delivery | ✅ |
+| Friend system | ✅ |
+| Pending messages (pre-friend) | ✅ |
+| Self-destructing notes | ✅ |
+| Google OAuth | ✅ |
+| TOTP two-factor authentication | ✅ |
+| Passphrase key backup & recovery | ✅ |
+| User blocking | ✅ |
+| Admin moderation tools | ✅ |
+| Web app | ✅ |
+| Android / iOS (Expo) | ✅ |
+| Desktop — Windows / macOS / Linux (Wails) | ✅ |
 
 ---
 
 ## Quick Start
 
+### Prerequisites
+
+- Go 1.22+
+- Node.js 20+ and pnpm 9+
+- MySQL 8+ or MariaDB 10.6+
+
 ### 1. Clone & Install
 
 ```bash
-git clone https://github.com/CongMC-Dev/messmini
-cd messmini
+git clone https://github.com/your-org/amoon-eclipse
+cd amoon-eclipse
 pnpm install
 ```
 
-### 2. Provision Cloudflare Resources
+### 2. Database
+
+```sql
+CREATE DATABASE amoon CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+CREATE USER 'amoon'@'%' IDENTIFIED BY 'yourpassword';
+GRANT ALL PRIVILEGES ON amoon.* TO 'amoon'@'%';
+```
+
+```bash
+mysql -u amoon -p amoon < packages/server/internal/db/schema.sql
+```
+
+### 3. Backend
 
 ```bash
 cd packages/server
-
-# Create D1 database
-wrangler d1 create messmini-db
-# Copy the database_id into wrangler.toml
-
-# Create R2 bucket
-wrangler r2 bucket create messmini-attachments
-
-# Create KV namespace
-wrangler kv namespace create RATE_LIMIT_KV
-# Copy the id into wrangler.toml
-
-# Set secrets
-wrangler secret put JWT_SECRET
-wrangler secret put ALLOWED_ORIGINS   # e.g., https://messmini.pages.dev
-
-# Run DB migrations
-wrangler d1 execute messmini-db --file=./schema.sql
 ```
 
-### 3. Deploy Backend
+Create a `.env` file:
 
-```bash
-pnpm --filter @messmini/server deploy
+```env
+DB_DSN=amoon:yourpassword@tcp(localhost:3306)/amoon?parseTime=true&charset=utf8mb4
+JWT_SECRET=<output of: openssl rand -hex 32>
+DB_ENCRYPTION_KEY=<output of: openssl rand -hex 32>
+DB_HMAC_KEY=<output of: openssl rand -hex 32>
+PORT=8080
+BASE_URL=http://localhost:8080
+ALLOWED_ORIGINS=http://localhost:5173
+
+# Optional
+GOOGLE_CLIENT_ID=
+GOOGLE_CLIENT_SECRET=
+SMTP_HOST=
+SMTP_PORT=587
+SMTP_USER=
+SMTP_PASS=
+CF_TURN_TOKEN_ID=
+CF_TURN_API_TOKEN=
 ```
 
-### 4. Run Web
+Build and run:
 
 ```bash
-# Update VITE_API_URL in apps/web/.env.local
-echo "VITE_API_URL=https://messmini-server.YOUR.workers.dev" > apps/web/.env.local
-
-pnpm dev:web
-# → http://localhost:3000
+go build -o amoon-server ./cmd/server/
+./amoon-server
+# → AMoon Eclipse server running on :8080
 ```
 
-### 5. Run Mobile (Expo Go)
-
-See [`docs/EXPO_GO_SETUP.md`](docs/EXPO_GO_SETUP.md) for the full guide.
+### 4. Web
 
 ```bash
-pnpm dev:mobile   # starts Expo → scan QR → runs on phone in 30s
+cd apps/web
+echo "VITE_API_URL=http://localhost:8080" > .env.local
+pnpm dev
 ```
 
-### 6. Run Desktop
+### 5. Mobile
 
 ```bash
-pnpm dev:desktop  # Starts Vite dev server + Electron simultaneously
+cd apps/mobile
+echo "EXPO_PUBLIC_API_URL=http://YOUR_LOCAL_IP:8080" > .env
+npx expo start
+```
+
+### 6. Desktop (Wails)
+
+```bash
+# Requires Wails CLI: go install github.com/wailsapp/wails/v2/cmd/wails@latest
+cd apps/desktop/wails-app
+wails dev
 ```
 
 ---
 
-## Development Commands
+## Environment Variables
+
+| Variable | Required | Description |
+|----------|:--------:|-------------|
+| `DB_DSN` | ✅ | MySQL DSN |
+| `JWT_SECRET` | ✅ | Token signing key |
+| `DB_ENCRYPTION_KEY` | ✅ | 64-char hex — AES-256 for PII at rest |
+| `DB_HMAC_KEY` | ✅ | 64-char hex — HMAC for email lookup tokens |
+| `PORT` | — | HTTP listen port (default: `8080`, or `P_SERVER_PORT`) |
+| `BASE_URL` | — | Public URL for OAuth redirect URIs |
+| `ALLOWED_ORIGINS` | — | CORS origins, comma-separated (default: `*`) |
+| `GOOGLE_CLIENT_ID/SECRET` | — | Google OAuth |
+| `CF_TURN_TOKEN_ID/API_TOKEN` | — | Cloudflare TURN for WebRTC |
+| `SMTP_*` | — | Email (password reset, verification) |
+| `FACEBOOK_APP_ID` | — | Facebook token verification |
+
+> The server reads `.env` from the working directory at startup. Real environment variables always override `.env` values.
+
+---
+
+## Deployment
+
+### Manual (Linux / VPS)
 
 ```bash
-# All apps in parallel (requires Turborepo)
-pnpm build
+# Cross-compile for Linux
+GOOS=linux GOARCH=amd64 CGO_ENABLED=0 \
+  go build -o amoon-server ./cmd/server/
 
-# Individual
-pnpm dev:web
-pnpm dev:mobile
-pnpm dev:desktop
-pnpm dev:server
+# Upload binary + .env to server
+scp amoon-server .env user@yourhost:/opt/amoon/
 
-# Type check everything
-pnpm type-check
-
-# Deploy backend
-pnpm --filter @messmini/server deploy
+# Run (use systemd, PM2, or your preferred process manager)
+cd /opt/amoon && ./amoon-server
 ```
 
----
+### Pterodactyl Panel
 
-## Cyberpunk Design System
+Works with the **Generic Go** egg out of the box:
 
-All platforms share the same visual language:
-
-| Token | Value | Usage |
-|---|---|---|
-| `neon-cyan` | `#00FFFF` | Primary UI, borders, text |
-| `neon-magenta` | `#FF00FF` | Accents, mode indicators |
-| `neon-green` | `#39FF14` | Success, online status |
-| `neon-yellow` | `#FFE600` | Warnings |
-| `dark-900` | `#050508` | Background |
-| `dark-800` | `#0D0D14` | Panels |
-| Font | JetBrains Mono | All text, all platforms |
-
-**Web/Desktop**: Tailwind CSS with custom cyberpunk utilities (`.cyber-panel`, `.cyber-input`, `.cyber-btn`, `.scan-overlay`)
-
-**Mobile**: NativeWind v4 with the same Tailwind config — same class names, native rendering.
+- Set `EXECUTABLE` → `amoon-server`
+- Startup command: `./${EXECUTABLE}`
+- Drop a `.env` file into the container — the server loads it automatically
+- `PORT` falls back to `P_SERVER_PORT` (Pterodactyl's primary allocation port) if not explicitly set
 
 ---
 
-## Roadmap
+## Contributing
 
-- [ ] Message search (client-side, decrypted in memory)
-- [ ] File attachments (encrypted R2 upload)
-- [ ] Group rooms (multi-recipient key wrapping — already supported in `encryptMessage()`)
-- [ ] Push notifications (Expo + FCM)
-- [ ] Desktop: system tray + unread badge
-- [ ] Self-destructing messages (TTL in D1)
-- [ ] Key rotation
-- [ ] Wails alternative for Desktop (Go binary, lighter than Electron)
+Pull requests are welcome. For major changes please open an issue first to discuss.
+
+1. Fork the repository
+2. Create a feature branch: `git checkout -b feat/my-feature`
+3. Commit your changes
+4. Open a Pull Request
+
+> **Important:** Do not break the E2EE bundle format. The `packages/common/src/crypto-engine.ts` format must remain compatible across Web, Mobile, and Desktop. Any change to `encryptMessage` / `decryptMessage` must be reflected on all three platforms.
 
 ---
 
 ## License
 
-MIT — CongMC Dev Team
+Copyright (C) 2026 AMoon Team & CongMC Dev Team
+
+This project is licensed under the **GNU Affero General Public License v3.0**.
+See [LICENSE](LICENSE) for the full text.
+
+In short: you are free to use, modify, and distribute this software, but any modified version you deploy as a network service **must also be released as open source** under the same license.
 
 ---
 
-*Built with the philosophy that free tiers are not limitations — they are constraints that force elegant engineering.*
-*Every byte optimized. Every API call justified. The Cloudflare stack, fully vắt kiệt.* 🐧☝️
+<div align="center">
+
+Built with ❤️ by **AMoon Team & CongMC Dev Team**
+
+*The server is blind. The key is yours.*
+
+</div>
