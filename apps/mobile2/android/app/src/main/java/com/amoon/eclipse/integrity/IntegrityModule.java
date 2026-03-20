@@ -14,6 +14,8 @@ import com.facebook.react.bridge.ReactApplicationContext;
 import com.facebook.react.bridge.ReactContextBaseJavaModule;
 import com.facebook.react.bridge.ReactMethod;
 
+import java.io.File;
+import java.io.FileInputStream;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 
@@ -23,8 +25,9 @@ public class IntegrityModule extends ReactContextBaseJavaModule {
         System.loadLibrary("amoon_integrity");
     }
 
-    // JNI declarations
-    private native String computeAppSum(String certHashHex, String deviceId);
+    // JNI declarations — nonce-bound, includes apkHash
+    private native String computeAppSum(String certHashHex, String deviceId,
+                                        String nonce, String apkHash);
     private native boolean isEnvironmentClean();
 
     private final ReactApplicationContext reactContext;
@@ -36,13 +39,10 @@ public class IntegrityModule extends ReactContextBaseJavaModule {
 
     @NonNull
     @Override
-    public String getName() {
-        return "IntegrityModule";
-    }
+    public String getName() { return "IntegrityModule"; }
 
-    /**
-     * Get the SHA-256 fingerprint of the APK signing certificate.
-     */
+    // ── Certificate hash ───────────────────────────────────────────────────────
+
     private String getSigningCertHash() {
         try {
             Context ctx = reactContext.getApplicationContext();
@@ -52,11 +52,9 @@ public class IntegrityModule extends ReactContextBaseJavaModule {
             Signature[] sigs;
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
                 PackageInfo pi = pm.getPackageInfo(pkg, PackageManager.GET_SIGNING_CERTIFICATES);
-                if (pi.signingInfo.hasMultipleSigners()) {
-                    sigs = pi.signingInfo.getApkContentsSigners();
-                } else {
-                    sigs = pi.signingInfo.getSigningCertificateHistory();
-                }
+                sigs = pi.signingInfo.hasMultipleSigners()
+                    ? pi.signingInfo.getApkContentsSigners()
+                    : pi.signingInfo.getSigningCertificateHistory();
             } else {
                 @SuppressWarnings("deprecation")
                 PackageInfo pi = pm.getPackageInfo(pkg, PackageManager.GET_SIGNATURES);
@@ -64,54 +62,118 @@ public class IntegrityModule extends ReactContextBaseJavaModule {
             }
 
             if (sigs == null || sigs.length == 0) return "";
-
             MessageDigest md = MessageDigest.getInstance("SHA-256");
             md.update(sigs[0].toByteArray());
             return bytesToHex(md.digest());
-
-        } catch (PackageManager.NameNotFoundException | NoSuchAlgorithmException e) {
+        } catch (Exception e) {
             return "";
         }
     }
 
-    /**
-     * Get a stable device identifier (Android ID).
-     * Note: resets on factory reset, unique per app+device.
-     */
+    // ── APK integrity hash (first 64 KB) ───────────────────────────────────────
+    // Changes if the APK is modified/repackaged, unchanged for legitimate installs.
+
+    private String getApkHash() {
+        try {
+            String apkPath = reactContext.getPackageCodePath();
+            MessageDigest md = MessageDigest.getInstance("SHA-256");
+            FileInputStream fis = new FileInputStream(apkPath);
+            byte[] buf = new byte[65536]; // 64 KB — covers ZIP/DEX headers + cert
+            int n = fis.read(buf);
+            fis.close();
+            if (n > 0) md.update(buf, 0, n);
+            return bytesToHex(md.digest());
+        } catch (Exception e) {
+            return "unavailable";
+        }
+    }
+
+    // ── Device ID ──────────────────────────────────────────────────────────────
+
     private String getDeviceId() {
         return Settings.Secure.getString(
-            reactContext.getContentResolver(),
-            Settings.Secure.ANDROID_ID
-        );
+            reactContext.getContentResolver(), Settings.Secure.ANDROID_ID);
+    }
+
+    // ── Java-level environment checks ──────────────────────────────────────────
+
+    /** Detects Xposed Framework by probing for its bridge class. */
+    private boolean isXposedActive() {
+        try {
+            ClassLoader.getSystemClassLoader()
+                       .loadClass("de.robv.android.xposed.XposedBridge");
+            return true; // class found → Xposed is loaded
+        } catch (ClassNotFoundException e) {
+            return false;
+        }
+    }
+
+    /** Basic emulator detection via Build properties (complements C++ check). */
+    private boolean isEmulatorBuild() {
+        String fp = Build.FINGERPRINT;
+        String model = Build.MODEL;
+        return fp.startsWith("generic") || fp.startsWith("unknown") ||
+               fp.contains("emulator") || fp.contains("sdk_gphone") ||
+               model.contains("google_sdk") || model.contains("Emulator") ||
+               model.contains("Android SDK built for") ||
+               Build.MANUFACTURER.equals("Genymotion") ||
+               Build.BRAND.startsWith("generic") ||
+               Build.DEVICE.startsWith("generic") ||
+               "google_sdk".equals(Build.PRODUCT);
+    }
+
+    /** Checks if Magisk Manager or common root manager apps are installed. */
+    private boolean hasRootApp() {
+        String[] rootApps = {
+            "com.topjohnwu.magisk",
+            "eu.chainfire.supersu",
+            "com.noshufou.android.su",
+            "com.koushikdutta.superuser",
+        };
+        PackageManager pm = reactContext.getPackageManager();
+        for (String pkg : rootApps) {
+            try { pm.getApplicationInfo(pkg, 0); return true; }
+            catch (PackageManager.NameNotFoundException ignored) {}
+        }
+        return false;
     }
 
     private static String bytesToHex(byte[] bytes) {
         StringBuilder sb = new StringBuilder(bytes.length * 2);
-        for (byte b : bytes) {
-            sb.append(String.format("%02x", b));
-        }
+        for (byte b : bytes) sb.append(String.format("%02x", b));
         return sb.toString();
     }
 
     // ── React Native API ───────────────────────────────────────────────────────
 
+    /**
+     * getAppSum(nonce) — nonce-bound integrity token.
+     * Formula: HMAC-SHA256(nonce:certHash:deviceId:apkHash, NATIVE_SALT)
+     */
     @ReactMethod
-    public void getAppSum(Promise promise) {
+    public void getAppSum(String nonce, Promise promise) {
         try {
+            // Layer 1: C++ environment check (debug + root + emulator)
             if (!isEnvironmentClean()) {
                 promise.reject("INTEGRITY_FAIL", "Compromised environment detected");
+                return;
+            }
+            // Layer 2: Java-level checks (Xposed, root apps, emulator build)
+            if (isXposedActive() || hasRootApp() || isEmulatorBuild()) {
+                promise.reject("INTEGRITY_FAIL", "Hostile environment detected");
                 return;
             }
 
             String certHash = getSigningCertHash();
             String deviceId = getDeviceId();
+            String apkHash  = getApkHash();
 
             if (certHash.isEmpty() || deviceId == null || deviceId.isEmpty()) {
                 promise.reject("INTEGRITY_FAIL", "Unable to retrieve device credentials");
                 return;
             }
 
-            String appSum = computeAppSum(certHash, deviceId);
+            String appSum = computeAppSum(certHash, deviceId, nonce, apkHash);
             if (appSum.isEmpty()) {
                 promise.reject("INTEGRITY_FAIL", "HMAC computation failed");
                 return;
@@ -125,6 +187,10 @@ public class IntegrityModule extends ReactContextBaseJavaModule {
 
     @ReactMethod
     public void checkEnvironment(Promise promise) {
-        promise.resolve(isEnvironmentClean());
+        boolean clean = isEnvironmentClean()
+            && !isXposedActive()
+            && !hasRootApp()
+            && !isEmulatorBuild();
+        promise.resolve(clean);
     }
 }

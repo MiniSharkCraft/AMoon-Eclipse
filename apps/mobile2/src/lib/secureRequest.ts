@@ -26,33 +26,22 @@ const { IntegrityModule } = NativeModules
 const _sigKeyParts = ['amoon', 'sig', 'key', 'v1', '2026']
 const SIG_KEY = _sigKeyParts.join('-')
 
-// ─── Cached App-Sum (computed once per app session) ──────────────────────────
-let _appSumCache: string | null = null
-let _appSumFetching: Promise<string> | null = null
+// ─── App-Sum (nonce-bound — NOT cached, computed fresh per request) ───────────
+// Formula: HMAC-SHA256(nonce:certHash:deviceId:apkHash, NATIVE_SALT)
+// Nonce-binding means a captured X-App-Sum cannot be replayed on a different request.
 
-async function getAppSum(): Promise<string> {
-  if (_appSumCache) return _appSumCache
-
-  if (_appSumFetching) return _appSumFetching
-
-  _appSumFetching = (async () => {
-    try {
-      if (!IntegrityModule?.getAppSum) {
-        // Dev mode / Expo Go — no native module available
-        return 'dev-mode-no-native'
-      }
-      const sum: string = await IntegrityModule.getAppSum()
-      _appSumCache = sum || 'integrity-failed'
-      return _appSumCache
-    } catch {
-      _appSumCache = 'integrity-error'
-      return _appSumCache
-    } finally {
-      _appSumFetching = null
+async function getAppSum(nonce: string): Promise<string> {
+  try {
+    if (!IntegrityModule?.getAppSum) {
+      // Dev mode / Expo Go — no native module available
+      return 'dev-mode-no-native'
     }
-  })()
+    const sum: string = await IntegrityModule.getAppSum(nonce)
+    return sum || 'integrity-failed'
+  } catch {
+    return 'integrity-error'
+  }
 
-  return _appSumFetching
 }
 
 // ─── Body serialization ───────────────────────────────────────────────────────
@@ -108,8 +97,9 @@ export function setupSecureInterceptor(instance: AxiosInstance): void {
     const nonce     = uuidv4()
     const body      = serializeBody(config.data)
 
+    // App-Sum is computed with the nonce → nonce-bound, cannot be replayed
     const [appSum, signature] = await Promise.all([
-      getAppSum(),
+      getAppSum(nonce),
       Promise.resolve(signRequest(method, path, timestamp, nonce, body, SIG_KEY)),
     ])
 

@@ -4,8 +4,10 @@
  * Responsibilities:
  *   1. Masked SECRET_SALT in binary (XOR + scatter, not a contiguous string)
  *   2. Anti-debug / anti-Frida checks
- *   3. HMAC-SHA256 computation without OpenSSL dependency
- *   4. App-Integrity-Sum = HMAC-SHA256(cert_hash:device_id, SECRET_SALT)
+ *   3. Root + emulator detection
+ *   4. HMAC-SHA256 computation without OpenSSL dependency
+ *   5. App-Integrity-Sum = HMAC-SHA256(nonce:cert_hash:device_id:apk_hash, SECRET_SALT)
+ *      — nonce-bound so captured tokens cannot be replayed
  */
 
 #include <jni.h>
@@ -164,6 +166,71 @@ static void hmac_sha256(const uint8_t* key, size_t keyLen,
     sha256_init(&c); sha256_update(&c,opad,64); sha256_update(&c,inner,32); sha256_final(&c,out);
 }
 
+// ─── Root detection ───────────────────────────────────────────────────────────
+
+static __attribute__((noinline)) bool isRooted() {
+    // 1. Common su binary locations
+    static const char* suPaths[] = {
+        "/system/bin/su", "/system/xbin/su", "/sbin/su",
+        "/system/su",     "/data/local/su",  "/data/local/tmp/su",
+        "/system/bin/.ext/su", "/system/xbin/.ext/su",
+        nullptr
+    };
+    for (int i = 0; suPaths[i]; i++) {
+        if (access(suPaths[i], F_OK) == 0) return true;
+    }
+
+    // 2. Magisk indicators
+    static const char* magiskPaths[] = {
+        "/sbin/.magisk",         "/data/adb/magisk",
+        "/data/adb/modules",     "/data/adb/magisk.img",
+        "/cache/.disable_magisk","/metadata/com.topjohnwu.magisk",
+        nullptr
+    };
+    for (int i = 0; magiskPaths[i]; i++) {
+        if (access(magiskPaths[i], F_OK) == 0) return true;
+    }
+
+    // 3. /system or /data mounted rw (remounted by root)
+    int fd = open("/proc/mounts", O_RDONLY);
+    if (fd >= 0) {
+        char buf[4096] = {};
+        read(fd, buf, sizeof(buf)-1);
+        close(fd);
+        if (strstr(buf, " / rw,") || strstr(buf, " /system rw,") ||
+            strstr(buf, " /system/bin rw")) return true;
+    }
+
+    return false;
+}
+
+// ─── Emulator detection ───────────────────────────────────────────────────────
+
+static __attribute__((noinline)) bool isEmulator() {
+    // 1. QEMU device nodes / Goldfish drivers
+    static const char* qemuFiles[] = {
+        "/dev/socket/qemud",  "/dev/qemu_pipe",
+        "/sys/qemu_trace",    "/system/bin/qemu-props",
+        "/system/lib/libc_malloc_debug_qemu.so",
+        nullptr
+    };
+    for (int i = 0; qemuFiles[i]; i++) {
+        if (access(qemuFiles[i], F_OK) == 0) return true;
+    }
+
+    // 2. CPU info: Goldfish / ranchu (Android emulator kernels)
+    int fd = open("/proc/cpuinfo", O_RDONLY);
+    if (fd >= 0) {
+        char buf[2048] = {};
+        read(fd, buf, sizeof(buf)-1);
+        close(fd);
+        if (strstr(buf, "Goldfish") || strstr(buf, "goldfish") ||
+            strstr(buf, "ranchu")) return true;
+    }
+
+    return false;
+}
+
 // ─── Anti-debug / Anti-Frida ─────────────────────────────────────────────────
 
 static __attribute__((noinline)) bool isBeingDebugged() {
@@ -225,30 +292,39 @@ static std::string toHex(const uint8_t* data, size_t len) {
 extern "C" {
 
 /**
- * computeAppSum(certHashHex: String, deviceId: String): String
+ * computeAppSum(certHashHex, deviceId, nonce, apkHash): String
  *
- * Returns HMAC-SHA256(certHash:deviceId, SECRET_SALT) as lowercase hex.
- * Returns "" if a debugger/Frida is detected.
+ * Returns HMAC-SHA256(nonce:certHash:deviceId:apkHash, SECRET_SALT) as lowercase hex.
+ * Nonce-bound: each token is tied to a specific request nonce → cannot be replayed.
+ * Returns "" if debug / root / emulator is detected.
  */
 JNIEXPORT jstring JNICALL
 Java_com_amoon_eclipse_integrity_IntegrityModule_computeAppSum(
         JNIEnv* env, jobject /* this */,
-        jstring jCertHash, jstring jDeviceId) {
+        jstring jCertHash, jstring jDeviceId,
+        jstring jNonce,    jstring jApkHash) {
 
-    // Anti-debug gate
-    if (isBeingDebugged()) {
-        LOGE("Integrity: debug detected, refusing computation");
+    // Full environment gate: debug + root + emulator
+    if (isBeingDebugged() || isRooted() || isEmulator()) {
+        LOGE("Integrity: hostile environment detected");
         return env->NewStringUTF("");
     }
 
     const char* certHash = env->GetStringUTFChars(jCertHash, nullptr);
     const char* deviceId = env->GetStringUTFChars(jDeviceId, nullptr);
+    const char* nonce    = env->GetStringUTFChars(jNonce,    nullptr);
+    const char* apkHash  = env->GetStringUTFChars(jApkHash,  nullptr);
 
-    // Build message: "certHash:deviceId"
-    std::string msg = std::string(certHash) + ":" + std::string(deviceId);
+    // message: "nonce:certHash:deviceId:apkHash"
+    std::string msg = std::string(nonce)    + ":" +
+                      std::string(certHash) + ":" +
+                      std::string(deviceId) + ":" +
+                      std::string(apkHash);
 
     env->ReleaseStringUTFChars(jCertHash, certHash);
     env->ReleaseStringUTFChars(jDeviceId, deviceId);
+    env->ReleaseStringUTFChars(jNonce,    nonce);
+    env->ReleaseStringUTFChars(jApkHash,  apkHash);
 
     // Unmask salt into stack buffer (zeroed after use)
     uint8_t salt[SALT_LEN + 1] = {};
@@ -259,21 +335,21 @@ Java_com_amoon_eclipse_integrity_IntegrityModule_computeAppSum(
                 reinterpret_cast<const uint8_t*>(msg.data()), msg.size(),
                 hmac);
 
-    // Zero salt immediately
-    memset(salt, 0, sizeof(salt));
+    memset(salt, 0, sizeof(salt)); // zero immediately
 
-    std::string hex = toHex(hmac, 32);
-    return env->NewStringUTF(hex.c_str());
+    return env->NewStringUTF(toHex(hmac, 32).c_str());
 }
 
 /**
  * isEnvironmentClean(): Boolean
- * Exposed for JS-level gating (fast path).
+ * Full check: debug + root + emulator.
  */
 JNIEXPORT jboolean JNICALL
 Java_com_amoon_eclipse_integrity_IntegrityModule_isEnvironmentClean(
         JNIEnv* /* env */, jobject /* this */) {
-    return static_cast<jboolean>(!isBeingDebugged());
+    return static_cast<jboolean>(
+        !isBeingDebugged() && !isRooted() && !isEmulator()
+    );
 }
 
 } // extern "C"

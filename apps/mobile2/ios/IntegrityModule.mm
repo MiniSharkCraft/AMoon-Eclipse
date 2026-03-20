@@ -4,6 +4,8 @@
  * Computes App-Integrity-Sum using:
  *   - Signing team ID from embedded provisioning profile
  *   - Device identifier (identifierForVendor)
+ *   - Request nonce (nonce-bound — cannot be replayed)
+ *   - App binary hash (detects tampered IPA)
  *   - SECRET_SALT masked in binary (same XOR scheme as Android)
  */
 
@@ -11,8 +13,10 @@
 #import <Foundation/Foundation.h>
 #import <UIKit/UIKit.h>
 #import <CommonCrypto/CommonHMAC.h>
+#import <CommonCrypto/CommonDigest.h>
 #import <Security/Security.h>
 #include <sys/sysctl.h>
+#include <dlfcn.h>
 #include <cstring>
 #include <cstdint>
 
@@ -49,16 +53,64 @@ static bool isBeingDebugged() {
     sysctl(mib, 4, &info, &size, nullptr, 0);
     if (info.kp_proc.p_flag & P_TRACED) return true;
 
-    // Suspicious Frida dylibs
+    // Suspicious Frida / Cycript dylibs in memory
     const char* fridaLibs[] = {
-        "FridaGadget", "frida", "cynject", "libcycript"
+        "FridaGadget", "frida", "cynject", "libcycript", nullptr
     };
     uint32_t count = _dyld_image_count();
     for (uint32_t i = 0; i < count; i++) {
         const char* name = _dyld_get_image_name(i);
         if (!name) continue;
-        for (auto lib : fridaLibs) {
-            if (strstr(name, lib)) return true;
+        for (int j = 0; fridaLibs[j]; j++) {
+            if (strstr(name, fridaLibs[j])) return true;
+        }
+    }
+
+    return false;
+}
+
+// ─── Jailbreak detection ─────────────────────────────────────────────────────
+
+static bool isJailbroken() {
+    // 1. Known jailbreak file system artifacts
+    static const char* jbPaths[] = {
+        "/Applications/Cydia.app",
+        "/Applications/Sileo.app",
+        "/Applications/Zebra.app",
+        "/usr/sbin/sshd",
+        "/usr/bin/ssh",
+        "/etc/apt",
+        "/var/lib/dpkg",
+        "/private/var/lib/apt",
+        "/private/var/mobile/Library/SBSettings",
+        "/Library/MobileSubstrate/MobileSubstrate.dylib",
+        nullptr
+    };
+    for (int i = 0; jbPaths[i]; i++) {
+        if ([[NSFileManager defaultManager] fileExistsAtPath:
+             [NSString stringWithUTF8String:jbPaths[i]]]) return true;
+    }
+
+    // 2. Sandbox escape check: can we write outside sandbox?
+    NSError* err = nil;
+    [@"jb" writeToFile:@"/private/jb_probe.txt"
+            atomically:NO encoding:NSUTF8StringEncoding error:&err];
+    if (!err) {
+        // Write succeeded — sandbox is broken
+        [[NSFileManager defaultManager] removeItemAtPath:@"/private/jb_probe.txt" error:nil];
+        return true;
+    }
+
+    // 3. Substrate / Substitute / ElleKit in dyld image list
+    const char* substrateLibs[] = {
+        "MobileSubstrate", "CydiaSubstrate", "substitute", "ElleKit", nullptr
+    };
+    uint32_t count = _dyld_image_count();
+    for (uint32_t i = 0; i < count; i++) {
+        const char* name = _dyld_get_image_name(i);
+        if (!name) continue;
+        for (int j = 0; substrateLibs[j]; j++) {
+            if (strstr(name, substrateLibs[j])) return true;
         }
     }
 
@@ -68,14 +120,11 @@ static bool isBeingDebugged() {
 // ─── Signing info ─────────────────────────────────────────────────────────────
 
 static NSString* getSigningTeamId() {
-    // Read embedded provisioning profile (not available in App Store builds
-    // without entitlement; use bundle identifier as fallback for distribution).
     NSString* profilePath = [NSBundle.mainBundle pathForResource:@"embedded"
                                                           ofType:@"mobileprovision"];
     if (profilePath) {
         NSData* data = [NSData dataWithContentsOfFile:profilePath];
         if (data) {
-            // Extract TeamIdentifier from the plist inside the CMS envelope
             NSString* raw = [[NSString alloc] initWithData:data
                                                   encoding:NSISOLatin1StringEncoding];
             NSRange start = [raw rangeOfString:@"<key>TeamIdentifier</key>"];
@@ -91,8 +140,26 @@ static NSString* getSigningTeamId() {
             }
         }
     }
-    // Fallback: use bundle ID (still unique per app, consistent across devices)
     return NSBundle.mainBundle.bundleIdentifier ?: @"unknown";
+}
+
+// ─── App binary hash (first 64 KB of main executable) ────────────────────────
+
+static NSString* getAppBinaryHash() {
+    NSString* execPath = NSBundle.mainBundle.executablePath;
+    if (!execPath) return @"unavailable";
+    NSFileHandle* fh = [NSFileHandle fileHandleForReadingAtPath:execPath];
+    if (!fh) return @"unavailable";
+    NSData* chunk = [fh readDataOfLength:65536];
+    [fh closeFile];
+
+    uint8_t digest[CC_SHA256_DIGEST_LENGTH];
+    CC_SHA256(chunk.bytes, (CC_LONG)chunk.length, digest);
+
+    NSMutableString* hex = [NSMutableString stringWithCapacity:CC_SHA256_DIGEST_LENGTH * 2];
+    for (int i = 0; i < CC_SHA256_DIGEST_LENGTH; i++)
+        [hex appendFormat:@"%02x", digest[i]];
+    return hex;
 }
 
 // ─── HMAC-SHA256 via CommonCrypto ─────────────────────────────────────────────
@@ -100,13 +167,11 @@ static NSString* getSigningTeamId() {
 static NSString* hmacSHA256(NSString* message, const uint8_t* key, size_t keyLen) {
     const char* msg = message.UTF8String;
     uint8_t out[CC_SHA256_DIGEST_LENGTH];
-    CCHmac(kCCHmacAlgSHA256, key, keyLen,
-           msg, strlen(msg), out);
+    CCHmac(kCCHmacAlgSHA256, key, keyLen, msg, strlen(msg), out);
 
     NSMutableString* hex = [NSMutableString stringWithCapacity:CC_SHA256_DIGEST_LENGTH * 2];
-    for (int i = 0; i < CC_SHA256_DIGEST_LENGTH; i++) {
+    for (int i = 0; i < CC_SHA256_DIGEST_LENGTH; i++)
         [hex appendFormat:@"%02x", out[i]];
-    }
     return hex;
 }
 
@@ -119,20 +184,29 @@ static NSString* hmacSHA256(NSString* message, const uint8_t* key, size_t keyLen
 
 RCT_EXPORT_MODULE();
 
-RCT_EXPORT_METHOD(getAppSum:(RCTPromiseResolveBlock)resolve
+/**
+ * getAppSum(nonce) — nonce-bound integrity token.
+ * Formula: HMAC-SHA256(nonce:teamId:deviceId:binaryHash, NATIVE_SALT)
+ */
+RCT_EXPORT_METHOD(getAppSum:(NSString*)nonce
+                  resolver:(RCTPromiseResolveBlock)resolve
                   rejecter:(RCTPromiseRejectBlock)reject) {
-    if (isBeingDebugged()) {
+
+    if (isBeingDebugged() || isJailbroken()) {
         reject(@"INTEGRITY_FAIL", @"Compromised environment detected", nil);
         return;
     }
 
-    NSString* teamId  = getSigningTeamId();
-    NSString* deviceId = [UIDevice.currentDevice.identifierForVendor UUIDString] ?: @"unknown";
-    NSString* message  = [NSString stringWithFormat:@"%@:%@", teamId, deviceId];
+    NSString* teamId     = getSigningTeamId();
+    NSString* deviceId   = [UIDevice.currentDevice.identifierForVendor UUIDString] ?: @"unknown";
+    NSString* binaryHash = getAppBinaryHash();
+
+    // message: "nonce:teamId:deviceId:binaryHash"
+    NSString* message = [NSString stringWithFormat:@"%@:%@:%@:%@",
+                         nonce, teamId, deviceId, binaryHash];
 
     uint8_t salt[SALT_LEN + 1] = {};
     unmaskSalt(salt);
-
     NSString* appSum = hmacSHA256(message, salt, SALT_LEN);
     memset(salt, 0, sizeof(salt));
 
@@ -145,7 +219,7 @@ RCT_EXPORT_METHOD(getAppSum:(RCTPromiseResolveBlock)resolve
 
 RCT_EXPORT_METHOD(checkEnvironment:(RCTPromiseResolveBlock)resolve
                   rejecter:(__unused RCTPromiseRejectBlock)reject) {
-    resolve(@(!isBeingDebugged()));
+    resolve(@(!isBeingDebugged() && !isJailbroken()));
 }
 
 @end
